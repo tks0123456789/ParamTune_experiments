@@ -29,7 +29,7 @@ for params in ParameterGrid(param_grid):
     params['n_informative'] = params['n_features'] / 2
     params['n_redundant'] = params['n_informative'] / 2
     param_data.update(params)
-    df = param_tune_experiment(param_data, parameter_space_xgb, max_evals=5, n_folds=10, seed=123)
+    df = param_tune_experiment(param_data, parameter_space_xgb, max_evals=100, n_folds=5, seed=123)
     df.to_csv(path_log + 'r001_n%d_p%d.csv' % (params['n_samples'], params['n_features']))
     rval = params.copy()
     rval['time'] = (datetime.now() - t0).total_seconds()
