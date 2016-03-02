@@ -66,7 +66,7 @@ def param_tune_experiment(param_data, param_space_xgb, max_evals=10, n_folds=5,
     
     eval_fn, n_lst, sc_valid= make_eval_XGBC(X_train, y_train, X_valid=X_valid, y_valid=y_valid,
                                              n_estimators_max=5000, learning_rate=.1,
-                                             subsample=.8, n_folds=n_folds, seed=321, verbose=verbose)
+                                             subsample=.8, n_folds=n_folds, seed=seed, verbose=verbose)
     trials = Trials()
     best = fmin(eval_fn, param_space_xgb, algo=tpe.suggest, trials=trials, max_evals=max_evals)
     if verbose:
