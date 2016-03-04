@@ -4,10 +4,10 @@ from lasagne.layers import InputLayer
 from lasagne.layers import DropoutLayer
 from lasagne.nonlinearities import softmax
 from lasagne.updates import nesterov_momentum
+from lasagne.init import GlorotUniform
 from nolearn.lasagne import BatchIterator, NeuralNet
 from nolearn.lasagne import TrainSplit
 
-from bayes_opt import BayesianOptimization
 
 class BatchIterator_shuffle(object):
     def __init__(self, batch_size, shuffle=False):
@@ -48,8 +48,29 @@ class BatchIterator_shuffle(object):
                 del state[attr]
         return state
 
+class EarlyStopping(object):
+    def __init__(self, patience=100):
+        self.patience = patience
+        self.best_valid = np.inf
+        self.best_valid_epoch = 0
+        self.best_weights = None
+
+    def __call__(self, nn, train_history):
+        current_valid = train_history[-1]['valid_loss']
+        current_epoch = train_history[-1]['epoch']
+        if current_valid < self.best_valid:
+            self.best_valid = current_valid
+            self.best_valid_epoch = current_epoch
+            self.best_weights = nn.get_all_params_values()
+        elif self.best_valid_epoch + self.patience < current_epoch:
+            print("Early stopping.")
+            print("Best valid loss was {:.6f} at epoch {}.".format(
+                self.best_valid, self.best_valid_epoch))
+            nn.load_params_from(self.best_weights)
+            raise StopIteration()
+
 def build_net(lr=.02, bs=256, mm=.9, h1=64, h2=128, p1=.2, p2=.2, w_init=0.01,
-              max_epochs=10, num_in=37, verbose=0):
+              max_epochs=10, num_in=37, eval_size=0.0, verbose=0):
               
     layers0 = [
         (InputLayer, {'shape': (None, num_in)}),
@@ -71,8 +92,11 @@ def build_net(lr=.02, bs=256, mm=.9, h1=64, h2=128, p1=.2, p2=.2, w_init=0.01,
         update_momentum=mm,
         update_learning_rate=lr,
         regression=False,
-        train_split=TrainSplit(eval_size=0.0),
+        train_split=TrainSplit(eval_size=eval_size),
         use_label_encoder=True,
+        on_epoch_finished = [
+            EarlyStopping(patience=10)
+        ],
         verbose=verbose,
     )
     return net0
@@ -85,24 +109,45 @@ def f64_to_int(params):
     return [int(p) for p in params]
     
 # Find good hyper parameters by BayesianOptimization begin
-def make_eval_NN(X_tr, y_tr, X_va, y_va, h1=128, h2=128, bs=256, max_epochs=10, n_iter_predict=5,
-                 seed_base=123, verbose=0):
+def make_eval_NN(X_train, y_train, X_valid, y_valid, n_folds=5,
+                 h1=128, h2=128, bs=256, max_epochs=10,
+                 seed=123, verbose=0):
+    epoch_lst = []
+    score_valid = []
+    skf = StratifiedKFold(y_train, n_folds=n_folds, shuffle=True, random_state=seed)
     num_in = X_tr.shape[1]
-    def eval_NN(log_lr, log_w_init, mm, p1, p2):
-        lr, mm, p1, p2, w_init = f64_to_f32((np.exp(log_lr),mm, p1, p2, np.exp(log_w_init)))
-                                             
-        #h1, h2 = f64_to_int((h1, h2))
-        pr = np.zeros(X_va.shape[0])
-        for seed in range(seed_base, seed_base+n_iter_predict):
-            np.random.seed(seed)
+    def eval_fn(params):
+        lr = params['lr']
+        mm = params['mm']
+        w_init = params['w_init']
+
+        
+        score = 0
+        epoch = 0
+        for tr, va in skf:
             net0 = build_net(lr=lr, bs=bs, mm=mm, h1=h1, h2=h2, p1=p1, p2=p2, w_init=w_init,
                              max_epochs=max_epochs, num_in=num_in, verbose=verbose)
-            net0.fit(X_tr, y_tr)
-            pr1 = net0.predict_proba(X_va)[:, 1]
-            pr += pr1
-            print roc_auc_score(y_va, pr)
-        return roc_auc_score(y_va, pr)
-    return eval_NN
+            X_tr, y_tr = X_train[tr], y_train[tr]
+            X_va, y_va = X_train[va], y_train[va]
+            model.set_params(**params)
+            model.fit(X_tr, y_tr)
+            hist_last = net0.train_history_[-1]
+            score += hist_last['valid_loss']
+            epoch += hist_last['epoch']
+        score /= n_folds
+        epoch /= n_folds
+        epoch_lst.append(epoch)
+        result_str = "train:%.4f epoch:%5d  " % (score, epoch)
+        if X_valid is not None:
+            net1 = build_net(lr=lr, bs=bs, mm=mm, h1=h1, h2=h2, p1=p1, p2=p2, w_init=w_init,
+                             max_epochs=max_epochs, num_in=num_in, verbose=verbose)
+            net1.fit(X_train, y_train)
+            pr = net1.predict_proba(X_valid)[:, 1]
+            score_valid.append(log_loss(y_valid, pr))
+        if verbose:
+            print result_str
+        return score
+    return eval_fn
 
 np.random.seed(321)
 SGDC_BO = BayesianOptimization(SGDCcv, {'log_alpha': (-9, 2)}, verbose=0)
