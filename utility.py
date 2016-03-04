@@ -47,7 +47,7 @@ def make_eval_XGB_C(X_train, y_train, X_valid, y_valid,
             model.fit(X_train, y_train)
             pr = model.predict_proba(X_valid)[:,1]
             valid_loss = log_loss(y_valid, pr)
-            result_str += "valid:%.4f" % sc_valid
+            result_str += "valid:%.4f" % valid_loss
         if verbose:
             print result_str
         return {'loss':score, 'valid_loss':valid_loss, 'n_estimators':n_estimators}
